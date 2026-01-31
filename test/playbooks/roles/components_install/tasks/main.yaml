@@ -51,10 +51,22 @@
   ansible.builtin.debug:
     msg: "Installing components - MCE chart: {{ use_mce_chart }}, Mode: {{ installation_mode }}, Skip CAPI install: {{ skip_capi_install }}"
 
-# Install common components (cert-manager, prometheus, ironic, BMO, MetalLB, nginx-ingress)
-# This always runs
-- name: Install common components
-  ansible.builtin.include_tasks: common.yaml
+- name: Wait for ironic
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: ironic
+    namespace: baremetal-operator-system
+  register: ironic_status
+  until: >-
+    ironic_status.resources[0].status.conditions |
+    selectattr('type', 'equalto', 'Available') |
+    selectattr('status', 'equalto', 'True') |
+    list | length > 0
+  # Ironic needs longer timeout due to IPA image download (~458MB)
+  # 3x medium_retries * medium_delay = 180 * 10s = 30 minutes
+  retries: "{{ (medium_retries | int) * 3 }}"
+  delay: "{{ medium_delay | int }}"
 
 # Skip CAPI/MCE installation if skip_capi_install is true
 - name: Skip CAPI installation (manual MCE deployment mode)
