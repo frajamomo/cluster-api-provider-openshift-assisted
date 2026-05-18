@@ -94,6 +94,7 @@ func resolveOpenShiftTLSConfig(ctx context.Context, k8sClient client.Client) (TL
 			"policy", adherencePolicy)
 		result := DefaultTLSConfig()
 		result.TLSAdherencePolicy = adherencePolicy
+		result.TLSProfileSpec = profileSpec
 		return result, nil
 	}
 
