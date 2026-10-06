@@ -7,16 +7,20 @@
     enablerepo: powertools
     name:
       - epel-release
-  when: ansible_facts['distribution'] != "RedHat"
+  when: ansible_facts['distribution'] not in ["RedHat", "Fedora"]
 - name: Install dependencies
   ansible.builtin.dnf:
     enablerepo: crb
     name: "{{ system_dependencies_packages }}"
-  when: ansible_facts['distribution'] != "RedHat"
+  when: ansible_facts['distribution'] not in ["RedHat", "Fedora"]
 - name: Install dependencies RHEL
   ansible.builtin.dnf:
     name: "{{ system_dependencies_packages }}"
   when: ansible_facts['distribution'] == "RedHat"
+- name: Install dependencies Fedora
+  ansible.builtin.dnf:
+    name: "{{ system_dependencies_packages }}"
+  when: ansible_facts['distribution'] == "Fedora"
 - name: Enable libvirtd
   ansible.builtin.systemd_service:
     name: libvirtd
