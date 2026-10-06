@@ -83,6 +83,10 @@
     skip_cluster: "{{ lookup('ansible.builtin.env', 'SKIP_CLUSTER', default='false') | lower in ['true', '1', 'yes'] }}"
   environment:
     PATH: "{{ extra_paths | join(':') }}:{{ ansible_env.PATH }}"
+    # Container runtime for kind. Empty => kind default (docker). Set to 'podman'
+    # (e.g. on hosts where docker network isolation blocks the kind<->BMH path) to
+    # use the podman provider. Sourced from KIND_EXPERIMENTAL_PROVIDER.
+    KIND_EXPERIMENTAL_PROVIDER: "{{ lookup('ansible.builtin.env', 'KIND_EXPERIMENTAL_PROVIDER', default='') }}"
   roles:
     # Infrastructure setup (always runs)
     - system_dependencies
