@@ -1,4 +1,9 @@
+#all:
+#  hosts:
+#    localhost:
+#      ansible_connection: local
 all:
   hosts:
-    localhost:
+    test_runner:
+      ansible_host: localhost
       ansible_connection: local
