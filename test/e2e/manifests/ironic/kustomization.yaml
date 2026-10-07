@@ -26,8 +26,9 @@ patches:
 # The TLS component adds certificates but it cannot know the exact IPs of our environment.
 # Here we patch the certificates to have the correct IPs.
 # - 192.168.1.7: management computer IP in out of band network
-# - 172.18.0.2: kind cluster node IP. This is what Ironic will see attached to the interface
-#   and use to communicate with Inspector.
+# - 172.18.0.2: docker kind cluster node IP (default provider).
+# - 10.89.0.2:  podman kind cluster node IP (KIND_EXPERIMENTAL_PROVIDER=podman).
+#   Ironic sees the node IP attached to the interface and uses it to communicate with Inspector.
 # - 192.168.0.150: management computer IP in the other network
 - patch: |-
     - op: replace
@@ -36,6 +37,9 @@ patches:
     - op: add
       path: /spec/ipAddresses/-
       value: 172.18.0.2
+    - op: add
+      path: /spec/ipAddresses/-
+      value: 10.89.0.2
   target:
     kind: Certificate
     name: ironic-cert|ironic-inspector-cert
