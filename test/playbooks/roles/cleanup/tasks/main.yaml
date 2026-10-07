@@ -1,4 +1,18 @@
 ---
+- name: Detect uplink interface from the default route
+  ansible.builtin.shell: >-
+    set -o pipefail; ip -4 route show default | awk '{print $5; exit}'
+  args:
+    executable: /bin/bash
+  register: _cleanup_uplink_detect
+  changed_when: false
+  failed_when: false
+  when: cleanup_uplink | length == 0
+
+- name: Set cleanup uplink fact
+  ansible.builtin.set_fact:
+    cleanup_uplink: "{{ cleanup_uplink if (cleanup_uplink | length > 0) else (_cleanup_uplink_detect.stdout | default('') | trim) }}"
+
 - name: Delete sushytools pod
   containers.podman.podman_container:
     name: sushy-tools
@@ -15,6 +29,9 @@
 
 - name: Delete kind cluster
   ansible.builtin.command: "kind delete cluster --name {{ kind_cluster_name }}"
+  environment:
+    # Honour the provider so the podman-backed cluster is actually found/deleted.
+    KIND_EXPERIMENTAL_PROVIDER: "{{ lookup('ansible.builtin.env', 'KIND_EXPERIMENTAL_PROVIDER', default='') }}"
   changed_when: true
   failed_when: false
   when: kind_binary.rc == 0
@@ -40,3 +57,97 @@
   community.libvirt.virt_net:
     state: absent
     name: bmh
+
+# Revert the host networking opened by the host_networking role so the host
+# returns to its original firewall state. Destroying the bmh libvirt network
+# above already drops the ip libvirt_network nft inserts; here we remove the
+# ip filter FORWARD / nat POSTROUTING additions. All are guarded (state=absent
+# is a no-op if the rule is not present), so this is safe on any host.
+- name: Remove FORWARD rules for podman subnets (source)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    source: "{{ item }}"
+    jump: ACCEPT
+    state: absent
+  loop: "{{ cleanup_podman_subnets }}"
+  failed_when: false
+
+- name: Remove FORWARD rules for podman subnets (destination)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    destination: "{{ item }}"
+    jump: ACCEPT
+    state: absent
+  loop: "{{ cleanup_podman_subnets }}"
+  failed_when: false
+
+- name: Remove POSTROUTING masquerade for podman subnets
+  ansible.builtin.iptables:
+    table: nat
+    chain: POSTROUTING
+    source: "{{ item }}"
+    destination: "! {{ item }}"
+    out_interface: "{{ cleanup_uplink }}"
+    jump: MASQUERADE
+    state: absent
+  loop: "{{ cleanup_podman_subnets }}"
+  failed_when: false
+  when: cleanup_uplink | length > 0
+
+- name: Remove FORWARD rules between bmh and kind subnets
+  ansible.builtin.iptables:
+    chain: FORWARD
+    source: "{{ item.src }}"
+    destination: "{{ item.dst }}"
+    jump: ACCEPT
+    state: absent
+  loop:
+    - { src: "{{ cleanup_kind_subnet }}", dst: "{{ cleanup_bmh_subnet }}" }
+    - { src: "{{ cleanup_bmh_subnet }}", dst: "{{ cleanup_kind_subnet }}" }
+  failed_when: false
+
+- name: Remove FORWARD bmh -> uplink
+  ansible.builtin.iptables:
+    chain: FORWARD
+    source: "{{ cleanup_bmh_subnet }}"
+    out_interface: "{{ cleanup_uplink }}"
+    jump: ACCEPT
+    state: absent
+  failed_when: false
+  when: cleanup_uplink | length > 0
+
+- name: Remove FORWARD uplink -> bmh (return)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    destination: "{{ cleanup_bmh_subnet }}"
+    in_interface: "{{ cleanup_uplink }}"
+    ctstate: RELATED,ESTABLISHED
+    jump: ACCEPT
+    state: absent
+  failed_when: false
+  when: cleanup_uplink | length > 0
+
+- name: Remove POSTROUTING masquerade for bmh subnet
+  ansible.builtin.iptables:
+    table: nat
+    chain: POSTROUTING
+    source: "{{ cleanup_bmh_subnet }}"
+    destination: "! {{ cleanup_bmh_subnet }}"
+    out_interface: "{{ cleanup_uplink }}"
+    jump: MASQUERADE
+    state: absent
+  failed_when: false
+  when: cleanup_uplink | length > 0
+
+# Remove the e2e scratch/cache directories created under /tmp.
+- name: Remove e2e temp/cache directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/capbcoa
+    - /tmp/dist
+    - /tmp/.ansible
+    - /tmp/.ansible.tmp
+    - /tmp/.ansible-cache
+    - /tmp/.cache

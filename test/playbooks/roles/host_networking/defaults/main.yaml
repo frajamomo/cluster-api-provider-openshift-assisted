@@ -1,0 +1,23 @@
+---
+# host_networking: open the forwarding/NAT paths the e2e needs when kind runs
+# under the podman provider on a host where the ip filter FORWARD policy is DROP
+# (e.g. Fedora with docker installed) and the libvirt NAT network rejects new
+# inbound connections to the emulated BMH VMs.
+#
+# These are host-level firewall rules; they are additive and removed again by
+# the cleanup role. They are a no-op under the docker provider.
+
+# Uplink interface used for outbound masquerade. Auto-detected from the default
+# route when left empty.
+host_networking_uplink: ""
+
+# kind (podman) node network and the libvirt BMH VM network.
+host_networking_kind_subnet: "10.89.0.0/24"
+host_networking_bmh_subnet: "192.168.222.0/24"
+
+# Additional podman subnets that need outbound (image pulls) and cross-bridge
+# forwarding: podman default and the kube pod network.
+host_networking_podman_subnets:
+  - "10.89.0.0/24"
+  - "10.244.0.0/16"
+  - "10.88.0.0/16"

@@ -83,10 +83,6 @@
     skip_cluster: "{{ lookup('ansible.builtin.env', 'SKIP_CLUSTER', default='false') | lower in ['true', '1', 'yes'] }}"
   environment:
     PATH: "{{ extra_paths | join(':') }}:{{ ansible_env.PATH }}"
-    # Container runtime for kind. Empty => kind default (docker). Set to 'podman'
-    # (e.g. on hosts where docker network isolation blocks the kind<->BMH path) to
-    # use the podman provider. Sourced from KIND_EXPERIMENTAL_PROVIDER.
-    KIND_EXPERIMENTAL_PROVIDER: "{{ lookup('ansible.builtin.env', 'KIND_EXPERIMENTAL_PROVIDER', default='') }}"
   roles:
     # Infrastructure setup (always runs)
     - system_dependencies
@@ -94,6 +90,11 @@
     - network_setup
     - baremetal_emulation
     - kind_setup
+    # Host firewall/NAT paths for the podman kind provider (no-op under docker).
+    # Runs here so outbound (image pulls) + bmh<->kind forwarding are open before
+    # build/components; the libvirt-NAT inbound rules are (re)applied after
+    # bmh_setup, once the bmh network exists.
+    - host_networking
     # Build provider images (skip if skip_build)
     - role: build_images
       when: not skip_build
@@ -103,6 +104,9 @@
     - components_install
     # BMH setup (always runs - needed for demo and full test)
     - bmh_setup
+    # Re-apply host networking now that the bmh libvirt network exists, so the
+    # libvirt-NAT inbound-accept rules (ironic -> VM :9999) are installed.
+    - host_networking
     # Cluster provisioning (skip if skip_cluster)
     - role: cluster_install
       when: not skip_cluster

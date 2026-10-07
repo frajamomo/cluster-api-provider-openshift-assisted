@@ -1,0 +1,19 @@
+---
+# Prepare a host to run the SNO/MNO e2e. Installs system dependencies and, when
+# running under the podman kind provider, opens the required host networking
+# paths. Safe to run repeatedly; idempotent.
+#
+# Usage:
+#   KIND_EXPERIMENTAL_PROVIDER=podman \
+#   ansible-playbook --become -i test/playbooks/inventories/local_host.yaml \
+#     test/playbooks/prepare.yaml
+#
+# The host networking rules are a no-op under the docker provider. They are
+# host-level firewall additions and are reverted by cleanup.yaml.
+- name: Prepare host for e2e
+  hosts: test_runner
+  environment:
+    KIND_EXPERIMENTAL_PROVIDER: "{{ lookup('ansible.builtin.env', 'KIND_EXPERIMENTAL_PROVIDER', default='') }}"
+  roles:
+    - system_dependencies
+    - host_networking

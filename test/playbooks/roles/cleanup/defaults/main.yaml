@@ -3,3 +3,15 @@
 # SNO run on a host previously used for multinode still removes all VMs,
 # without the caller needing to pass anything.
 max_number_of_nodes: 7
+
+# Subnets whose host firewall rules (added by the host_networking role for the
+# podman provider) are reverted during cleanup. Must match host_networking's.
+cleanup_kind_subnet: "10.89.0.0/24"
+cleanup_bmh_subnet: "192.168.222.0/24"
+cleanup_podman_subnets:
+  - "10.89.0.0/24"
+  - "10.244.0.0/16"
+  - "10.88.0.0/16"
+# Uplink interface for masquerade-rule removal. Empty => auto-detect from the
+# default route in the cleanup tasks.
+cleanup_uplink: ""

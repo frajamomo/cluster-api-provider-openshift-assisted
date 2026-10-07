@@ -1,0 +1,143 @@
+---
+# Only needed for the podman kind provider. Under docker the kind network and
+# the BMH network are reachable without these rules, so skip entirely.
+- name: Determine kind provider
+  ansible.builtin.set_fact:
+    _kind_provider: "{{ lookup('ansible.builtin.env', 'KIND_EXPERIMENTAL_PROVIDER', default='') }}"
+
+- name: Skip host networking under non-podman provider
+  ansible.builtin.debug:
+    msg: "KIND_EXPERIMENTAL_PROVIDER='{{ _kind_provider }}' - host_networking rules only apply to the podman provider; skipping."
+  when: _kind_provider != "podman"
+
+- name: Configure host networking for podman provider
+  when: _kind_provider == "podman"
+  block:
+    - name: Detect uplink interface from the default route
+      ansible.builtin.shell: >-
+        set -o pipefail; ip -4 route show default | awk '{print $5; exit}'
+      args:
+        executable: /bin/bash
+      register: _uplink_detect
+      changed_when: false
+      when: host_networking_uplink | length == 0
+
+    - name: Set uplink fact
+      ansible.builtin.set_fact:
+        _uplink: "{{ host_networking_uplink if (host_networking_uplink | length > 0) else _uplink_detect.stdout | trim }}"
+
+    - name: Fail if uplink could not be determined
+      ansible.builtin.fail:
+        msg: "Could not determine the uplink interface; set host_networking_uplink explicitly."
+      when: _uplink | length == 0
+
+    - name: Check IPv4 forwarding state
+      ansible.builtin.command: sysctl -n net.ipv4.ip_forward
+      register: _ip_forward
+      changed_when: false
+
+    - name: Enable IPv4 forwarding
+      ansible.builtin.command: sysctl -w net.ipv4.ip_forward=1
+      when: _ip_forward.stdout | trim != "1"
+      changed_when: true
+
+    # --- ip filter FORWARD: podman subnets (outbound image pulls + cross-bridge) ---
+    - name: Allow FORWARD for podman subnets (source)
+      ansible.builtin.iptables:
+        chain: FORWARD
+        source: "{{ item }}"
+        jump: ACCEPT
+        action: insert
+      loop: "{{ host_networking_podman_subnets }}"
+
+    - name: Allow FORWARD for podman subnets (destination)
+      ansible.builtin.iptables:
+        chain: FORWARD
+        destination: "{{ item }}"
+        jump: ACCEPT
+        action: insert
+      loop: "{{ host_networking_podman_subnets }}"
+
+    - name: Masquerade podman subnets out the uplink
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        source: "{{ item }}"
+        destination: "! {{ item }}"
+        out_interface: "{{ _uplink }}"
+        jump: MASQUERADE
+        action: append
+      loop: "{{ host_networking_podman_subnets }}"
+
+    # --- ip filter FORWARD: VM (bmh) <-> kind node ---
+    - name: Allow FORWARD kind -> bmh
+      ansible.builtin.iptables:
+        chain: FORWARD
+        source: "{{ host_networking_kind_subnet }}"
+        destination: "{{ host_networking_bmh_subnet }}"
+        jump: ACCEPT
+        action: insert
+
+    - name: Allow FORWARD bmh -> kind
+      ansible.builtin.iptables:
+        chain: FORWARD
+        source: "{{ host_networking_bmh_subnet }}"
+        destination: "{{ host_networking_kind_subnet }}"
+        jump: ACCEPT
+        action: insert
+
+    # --- ip filter FORWARD: bmh VM subnet -> internet (RHCOS download) ---
+    - name: Allow FORWARD bmh -> uplink
+      ansible.builtin.iptables:
+        chain: FORWARD
+        source: "{{ host_networking_bmh_subnet }}"
+        out_interface: "{{ _uplink }}"
+        jump: ACCEPT
+        action: insert
+
+    - name: Allow FORWARD uplink -> bmh (return traffic)
+      ansible.builtin.iptables:
+        chain: FORWARD
+        destination: "{{ host_networking_bmh_subnet }}"
+        in_interface: "{{ _uplink }}"
+        ctstate: RELATED,ESTABLISHED
+        jump: ACCEPT
+        action: insert
+
+    - name: Masquerade bmh subnet out the uplink
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        source: "{{ host_networking_bmh_subnet }}"
+        destination: "! {{ host_networking_bmh_subnet }}"
+        out_interface: "{{ _uplink }}"
+        jump: MASQUERADE
+        action: append
+
+    # --- libvirt NAT: accept NEW inbound to the VMs (bmh zone otherwise only
+    #     accepts established,related and rejects new connections). The libvirt
+    #     network must exist first (bmh_setup creates it), so this runs after
+    #     kind_setup/bmh_setup in the play order via the forward chain being live.
+    - name: Check libvirt_network forward chain exists
+      ansible.builtin.command: nft list chain ip libvirt_network forward
+      register: _libvirt_fwd
+      changed_when: false
+      failed_when: false
+
+    - name: Allow libvirt forward kind -> bmh (new inbound to VMs)
+      ansible.builtin.command: >-
+        nft insert rule ip libvirt_network forward
+        ip saddr {{ host_networking_kind_subnet }} ip daddr {{ host_networking_bmh_subnet }} counter accept
+      when:
+        - _libvirt_fwd.rc == 0
+        - ("saddr " ~ host_networking_kind_subnet ~ " ip daddr " ~ host_networking_bmh_subnet) not in _libvirt_fwd.stdout
+      changed_when: true
+
+    - name: Allow libvirt forward bmh -> kind
+      ansible.builtin.command: >-
+        nft insert rule ip libvirt_network forward
+        ip saddr {{ host_networking_bmh_subnet }} ip daddr {{ host_networking_kind_subnet }} counter accept
+      when:
+        - _libvirt_fwd.rc == 0
+        - ("saddr " ~ host_networking_bmh_subnet ~ " ip daddr " ~ host_networking_kind_subnet) not in _libvirt_fwd.stdout
+      changed_when: true
