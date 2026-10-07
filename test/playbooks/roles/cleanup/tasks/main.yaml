@@ -127,6 +127,15 @@
   failed_when: false
   when: cleanup_uplink | length > 0
 
+- name: Remove FORWARD uplink -> bmh (legacy state-match variant, if present)
+  ansible.builtin.command: >-
+    iptables -D FORWARD -d {{ cleanup_bmh_subnet }} -i {{ cleanup_uplink }}
+    -m state --state RELATED,ESTABLISHED -j ACCEPT
+  register: _rm_legacy_rel
+  changed_when: _rm_legacy_rel.rc == 0
+  failed_when: false
+  when: cleanup_uplink | length > 0
+
 - name: Remove POSTROUTING masquerade for bmh subnet
   ansible.builtin.iptables:
     table: nat
