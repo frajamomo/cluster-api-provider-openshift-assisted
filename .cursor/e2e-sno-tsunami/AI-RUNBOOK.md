@@ -224,4 +224,16 @@ disconnect during `Rebooting` is normal.
    look alike at the `bmh get` level but differ at the probe level.
 5. If `firewalld`/`libvirt net` was restarted, re-apply §4 — rules are not
    persistent.
+6. **Upgrade only via OACP.** The spoke OCP version is owned by
+   `OpenshiftAssistedControlPlane.spec.distributionVersion`. To upgrade, patch it
+   (`kubectl -n test-capi patch openshiftassistedcontrolplane test-sno
+   --type=merge -p '{"spec":{"distributionVersion":"<ver>"}}'`). NEVER
+   `oc adm upgrade` on the spoke — CAPOA reverts it to `distributionVersion`,
+   which looks like a spontaneous downgrade. Watch OACP
+   `status.conditions[type=UpgradeCompleted]` → `True`.
+7. **Host must not reboot/suspend mid-run.** On Fedora, set dnf-automatic
+   `reboot = never` and disable GNOME idle-suspend before a long run (see
+   SETUP doc "Host hardening"). An interrupted run leaves a half-built cluster
+   (often on the docker provider if the env var was lost) — tear down with
+   cleanup.yaml and restart.
 ```

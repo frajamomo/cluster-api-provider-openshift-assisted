@@ -75,6 +75,51 @@ Expected end state: ACI `Completed=True` / stateInfo `adding-hosts: Cluster is
 installed`, spoke node Ready (control-plane,master,worker), all cluster
 operators Available.
 
+## Connect from a remote laptop
+
+The spoke API is `https://api.test-sno.lab.home:6443` → `192.168.222.31`, only
+routable from the host. Reach it from a laptop via an SSH tunnel:
+
+```bash
+# one-time: map the api hostname to localhost
+echo "127.0.0.1 api.test-sno.lab.home" | sudo tee -a /etc/hosts
+
+# tunnel (unprivileged local port, keep running). Needs AllowTcpForwarding yes
+# in the host sshd (set in /etc/ssh/sshd_config.d/*.conf).
+ssh -N -L 16443:192.168.222.31:6443 <host>
+
+# fetch kubeconfig once, point it at the local port
+ssh <host> 'sudo KIND_EXPERIMENTAL_PROVIDER=podman kind get kubeconfig --name capi-baremetal-provider > /tmp/kc 2>/dev/null; KUBECONFIG=/tmp/kc kubectl -n test-capi get secret test-sno-admin-kubeconfig -o jsonpath="{.data.kubeconfig}" | base64 -d' > ~/sno-kubeconfig
+sed -i 's|:6443|:16443|' ~/sno-kubeconfig
+export KUBECONFIG=~/sno-kubeconfig
+kubectl get nodes
+```
+
+TLS verifies because the cert is for `api.test-sno.lab.home` (port isn't in the
+cert). If the tunnel resets with "connection refused" on the local port, the
+host sshd has `AllowTcpForwarding no` — enable it and `systemctl reload sshd`.
+
+## Upgrading the cluster
+
+**The OCP version is owned by CAPOA**, via
+`OpenshiftAssistedControlPlane.spec.distributionVersion`. Upgrade by patching
+that — NOT with `oc adm upgrade` on the spoke (CAPOA reconciles a manual
+`oc adm upgrade` straight back to `distributionVersion`, which looks like a
+spontaneous downgrade).
+
+```bash
+sudo KIND_EXPERIMENTAL_PROVIDER=podman kind get kubeconfig --name capi-baremetal-provider > /tmp/kc
+export KUBECONFIG=/tmp/kc
+kubectl -n test-capi patch openshiftassistedcontrolplane test-sno --type=merge \
+  -p '{"spec":{"distributionVersion":"4.20.40"}}'
+```
+
+Watch: OACP `status.conditions[type=UpgradeCompleted]` (goes
+`UpgradeInProgress` → `True`) and, on the spoke, `oc get clusterversion`
+(`Working towards 4.20.40` → `Progressing=False`). Expect one node reboot
+(brief API blackout). This is exactly what the e2e `assert_upgrade` role does
+when `upgrade_to_version` is set.
+
 ## Teardown (back to original host state)
 
 ```bash

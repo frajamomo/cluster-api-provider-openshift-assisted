@@ -40,6 +40,24 @@ NUMBER_OF_NODES=1
 PULLSECRET=<base64>   # sourced from ~/e2e-sno.env (perms 600), never printed
 ```
 
+### Host hardening for unattended runs
+
+A full SNO run (install + optional upgrade) takes well over an hour. Two Fedora
+defaults will interrupt it and must be disabled on the host:
+
+- **Automatic reboot after updates.** `dnf-automatic` ships with
+  `apply_updates = yes` and `reboot = when-needed`, which reboots the host
+  mid-run. Set `reboot = never` in `/etc/dnf/automatic.conf` (and the dnf5
+  `/etc/dnf/dnf5-plugins/automatic.conf` if present).
+- **Idle suspend.** GNOME suspends on AC idle (`sleep-inactive-ac-type =
+  suspend`, 15 min). Set it to `nothing`
+  (`gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing`,
+  plus the `-battery-` variant). systemd `suspend.target`/`sleep.target` are also
+  masked on tsunami as a hard backstop.
+
+For remote laptop access to the deployed cluster (see REDEPLOY.md), the host
+sshd also needs `AllowTcpForwarding yes` for the API SSH tunnel.
+
 ### Emulated BMH VM
 
 `bmh-vm-01` — 8 vCPU, 16 GiB RAM, 120 GiB disk, UEFI (OVMF), NIC MAC
